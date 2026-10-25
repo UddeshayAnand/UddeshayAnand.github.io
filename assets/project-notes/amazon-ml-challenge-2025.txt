@@ -1,0 +1,70 @@
+# Amazon ML Challenge 2025: Product Price Prediction
+
+Experiments in predicting product prices from catalog descriptions and images. There are 34 historical notebooks, with two FLAN-T5 notebooks selected for maintenance: encoder regression and numeric text generation.
+
+The work was collaborative. Individual ownership of every notebook and the mapping from final submissions to models have not been established. The previously reported rank 181 / SMAPE 44.68 is unverified here and is not attributed to either maintained notebook.
+
+## Approach and evidence
+
+The encoder model pools non-padding FLAN-T5 representations and feeds them into a `512 → 256 → 128 → 1` MLP. It predicts `log1p(price)` using Huber loss. The generation model produces numeric price strings with dynamic input and label padding.
+
+| Experiment | Historical validation SMAPE (%) |
+|---|---:|
+| FLAN-T5 encoder + MLP | 45.08568 |
+| FLAN-T5 generation with dynamic padding | 44.30027 |
+
+These values come from saved checkpoint messages, not fresh runs. Different experimental settings prevent a controlled comparison. Splitting and parsing repairs change the execution path; these scores do not describe the repaired versions. See [experiment evidence and limitations](docs/experiments.md).
+
+## Setup and tests
+
+Use Python 3.10–3.12, from the repository root:
+
+```bash
+python -m venv .venv
+# PowerShell: .venv\Scripts\Activate.ps1
+# macOS/Linux: source .venv/bin/activate
+python -m pip install -e ".[dev]"
+python -m pytest -q
+```
+
+The shared package implements input validation, grouped splitting, SMAPE, price parsing, and submission checks. There is no command-line training application. CPU tests exercise utility behavior and notebook syntax; they do not train models. The same tests can run with `python -m unittest discover -s tests -v` after installation.
+
+## Run an experiment
+
+```bash
+python -m pip install -e ".[neural]"
+python -m jupyterlab
+```
+
+Open either file under `notebooks/3. Text Only Approach/`:
+
+- `flan-t5-mlp-regression-log-transformed.ipynb`
+- `flan-t5-model-main-third-method-dynamic-length.ipynb`
+
+Set the `PROJECT_ROOT` environment variable if launching outside the repository. Review `MODEL_NAME`, `BATCH_SIZE`, `MAX_EPOCHS`, `NUM_WORKERS`, and `RUN_DIR` in the configuration cell, then run cells in order. Defaults use FLAN-T5-XL, batch size 4, and zero worker processes for notebook portability. Training requires a suitable CUDA GPU; memory capacity and duration are not guaranteed. Initial model loading downloads pretrained files. No trained checkpoint is supplied.
+
+Place authorized challenge inputs at `data/train.csv` and `data/test.csv`; see [data requirements](data/README.md). Each maintained notebook writes configuration, input hashes, split membership, validation predictions, checkpoints, and `submission.csv` to its own directory under `runs/`. Use a fresh run directory. Predictions use the best holdout checkpoint, without a full-data refit. Only load trusted checkpoints.
+
+## Repository map
+
+```text
+src/product_pricing/  Shared data, metric, and export utilities
+tests/               CPU behavior tests and notebook syntax checks
+notebooks/           Maintained experiments and historical exploration
+docs/experiments.md  Results evidence and known limitations
+data/                Challenge statement and local input CSVs
+.github/workflows/   CPU checks for Python 3.10–3.12
+```
+
+## Limitations and rights
+
+- Repaired neural paths have not completed a fresh GPU training run. CPU tests establish narrower guarantees.
+- Grouped splitting keeps case/whitespace-equivalent descriptions together, but does not detect near-duplicates or product families.
+- Historical experiments may require additional libraries, images, models, or missing intermediate files. Several contain leakage or incomplete evaluation. See the [notebook index](notebooks/README.md).
+- Dataset redistribution permission and a license for the collected code have not been established. Local raw CSVs are ignored for future Git additions. Third-party templates, models, and challenge materials retain their own terms.
+
+## References
+
+- [FLAN-T5-XL model card](https://huggingface.co/google/flan-t5-xl)
+- [Scaling Instruction-Finetuned Language Models](https://arxiv.org/abs/2210.11416)
+- The supplied challenge statement is retained under `data/`.

@@ -1,0 +1,137 @@
+# Cybercrime data analysis and prediction
+
+Exploratory analysis of district-level reported cybercrime category counts in the supplied 2017–2022 CSV. Python notebooks examine trends, compare count-regression models, cluster district profiles, and prepare data for an existing Tableau dashboard.
+
+This is a historical analysis and modeling exercise. Its six annual observations do not establish reliable long-term forecasts or identify individual crime risk.
+
+## Data and approach
+
+The snapshot has 5,322 registration-circle/year rows, 48 columns, and 36 state/territory labels. The source download URL and redistribution terms are not recorded in the repository. See [the data dictionary](docs/data-dictionary.md) for the schema, verified relationships, and provenance gaps.
+
+- Combined counts sum 40 category columns. Geographic identifiers and `total_offences_under_ip` are excluded; the latter exactly duplicates the sum of 17 category columns in this snapshot.
+- Geographic aggregation uses state and district together. Registration-circle records are summed before district-level modeling.
+- Linear regression and scaled RBF SVR use year as their predictor. Expanding-window one-year holdouts compare them with a last-observation baseline. Feature and target scaling are fitted within each training fold.
+- The random forest uses state, district, and year, holding out the latest observed year. Its saved pipeline includes categorical preprocessing.
+- K-means groups standardized district average-count profiles. Isolation Forest flags count magnitudes; neither establishes crime risk or district-specific temporal spikes.
+
+Counts are not population-adjusted rates. Category sums are not verified counts of unique incidents. The source dictionary is needed to resolve potentially overlapping categories and similarly named fields.
+
+## Setup
+
+Use Python 3.12. From the repository directory:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m notebook
+```
+
+On macOS/Linux, replace `.venv\Scripts\python.exe` with `.venv/bin/python`. Dependency versions are defined in `pyproject.toml`; `requirements.txt` installs the package with its notebook extras. Transitive dependencies are not locked. No API keys, environment variables, or external service account are needed for the Python workflow.
+
+The install command installs the local `cybercrime_analysis` package in editable mode, together with its notebook dependencies. Open the notebooks in `notebooks/` and select the virtual environment's Python kernel. Run cells from top to bottom, starting with a fresh kernel. Data and output paths are resolved relative to the checkout, so they do not depend on the notebook's working directory. This package is intended for an editable checkout; the dataset is not bundled into a wheel.
+
+## Notebook guide
+
+| Notebook | Purpose | Prerequisite |
+| --- | --- | --- |
+| [crime-trends.ipynb](notebooks/crime-trends.ipynb) | Annual totals and selected-category geographic comparisons | Source CSV |
+| [linear-regression.ipynb](notebooks/linear-regression.ipynb) | Linear annual regression, baseline comparison, illustrative forecasts | Source CSV |
+| [support-vector-regressor.ipynb](notebooks/support-vector-regressor.ipynb) | Scaled SVR counterpart | Source CSV |
+| [ml-models.ipynb](notebooks/ml-models.ipynb) | District regression, clustering, count outliers; saves a training-window model pipeline | Source CSV |
+| [yearly-crime-analysis.ipynb](notebooks/yearly-crime-analysis.ipynb) | State/category SVR forecasts, national backtest, wide and yearly exports | Source CSV |
+| [preprocess-data.ipynb](notebooks/preprocess-data.ipynb) | Validates and reshapes category rows for Tableau | Run yearly analysis first |
+| [data-visualzation.ipynb](notebooks/data-visualzation.ipynb) | State growth and growth in national totals | Run yearly analysis first |
+
+The two national regression notebooks retain the original `total_offences_under_ip` target. The yearly export models all 40 categories individually and recomputes subtotals. These are different targets and levels of aggregation, so their forecasts need not agree.
+
+To execute a notebook without the browser:
+
+```powershell
+.venv\Scripts\python.exe -m nbconvert --execute --to notebook --inplace notebooks/yearly-crime-analysis.ipynb
+.venv\Scripts\python.exe -m nbconvert --execute --to notebook --inplace notebooks/preprocess-data.ipynb
+```
+
+`--inplace` saves execution outputs into the notebook. The repository's notebooks are supplied with cleared outputs.
+
+## Tableau workflow
+
+1. Run `yearly-crime-analysis.ipynb`, then `preprocess-data.ipynb`.
+2. Open `tableau/Crime Analysis.twb` in Tableau (the original workbook was saved with Tableau 2024.3).
+3. Refresh its two CSV connections. They point to `../outputs/tables` relative to the workbook. If Tableau resolves relative paths elsewhere, use **Edit Connection** to select the generated files in `outputs/tables/`.
+4. Check the year filter before interpreting totals. **2017–2022 are observed; 2023–2030 are illustrative forecasts.** An all-year total includes both.
+
+The workbook's missing temporary extracts were removed. Its CSV schemas and additive totals were updated, but the edited workbook has not been opened and interactively verified in Tableau.
+
+Generated files in `outputs/` are ignored by Git. Notebook producers create their output directories when needed:
+
+| File | Contents |
+| --- | --- |
+| `outputs/tables/future_crime_predictions.csv` | One state/year row with 40 categories, recomputed totals, top categories, and `record_type`. Despite its legacy name, it contains history and forecasts. |
+| `outputs/tables/yearly_crime_analysis.csv` | National category sums, totals, top categories/states, and `record_type` by year |
+| `outputs/tables/preprocessed_crime_data.csv` | One state/year/category row with `crime_count` and `record_type` |
+| `outputs/tables/forecast_backtest.csv` | National combined-count expanding-window predictions and baseline |
+| `outputs/models/crime_prediction_model.pkl` | Random-forest pipeline fitted only on the training window in `ml-models.ipynb` |
+
+In the long export, `total_crimes` repeats across categories. Aggregate `crime_count`, not that repeated context field. Model files use joblib serialization; load only trusted artifacts in a compatible environment.
+
+### Historical dashboard screenshot
+
+![Historical Tableau dashboard, before corrected aggregation and forecast labeling](docs/images/cybercrime-dashboard.png)
+
+This preserves the existing dashboard image. Its figures predate the corrected calculations and must not be used as verified results of the revised notebooks. A replacement requires an actual Tableau refresh and visual review.
+
+## Tests and verification
+
+```powershell
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+Tests cover count selection, subtotal validation, geographic grouping, source-data errors, chronological forecasting, unique forecast years, ranking inputs, and export reconciliation. There is no separate build, linter, or type-check configuration.
+
+Local verification on Python 3.12 completed all 19 unit tests and all seven notebooks through an in-process cell runner. After reorganizing the folders, the package was installed in editable mode in a local virtual environment reusing existing system dependencies; imports and source-data loading were also checked from `notebooks/`. This does not verify a clean dependency installation. The 504 state/year rows, 20,160 category rows, and 14 yearly rows reconciled with each other; exported observations also matched the source aggregates. The saved model pipeline was reloaded and accepted an unseen geographic label.
+
+The national combined-count backtest produced the following results over the three held-out years, 2020–2022:
+
+| Method | MAE | RMSE |
+| --- | ---: | ---: |
+| Last observation | 7,100.33 | 8,255.93 |
+| Linear regression | 4,443.99 | 5,398.64 |
+| RBF SVR | 9,097.31 | 10,143.16 |
+
+On the separate 2022 district holdout, the random forest's MAE was 37.43 versus 36.56 for the previous-year baseline. These results do not support claiming that the more complex models improve prediction generally. The state/category SVR export remains an illustrative experiment.
+
+Verification limits: standard `nbconvert` execution stalled and was interrupted in the local environment, so kernel-based execution and a fresh-environment installation remain unverified. An offline dependency dry run found the pinned packages installed, but `pip check` reported existing conflicts in unrelated installed packages, including the shared Jupyter HTTP stack. Notebook execution emitted a joblib warning about unavailable physical-core detection; the analysis still completed. The Tableau workbook passed XML/schema checks but has not been interactively tested.
+
+## Limitations and next steps
+
+- Establish the dataset's source, definitions, and redistribution permission before making stronger claims or adding a data license. No code license has been selected either.
+- Only six annual observations are available. Three one-year backtest folds do not validate eight-year extrapolation; state/category forecasts have not each been backtested.
+- Forecasts use only year. There are no population denominators, exposure measures, uncertainty intervals, or causal predictors. Negative model predictions are floored at zero and fractional forecasts are retained.
+- Reporting coverage, geographic boundaries, and category definitions may change. The state/territory names are preserved as supplied, including labels used across the full snapshot.
+- Validate the repaired workbook in Tableau and replace the historical screenshot only with a real refreshed output.
+
+## Structure
+
+```text
+.
+|-- README.md
+|-- pyproject.toml
+|-- requirements.txt
+|-- src/cybercrime_analysis/
+|   |-- __init__.py
+|   `-- analysis.py
+|-- notebooks/                 # Seven analysis notebooks
+|-- data/raw/                  # Original CSV snapshot
+|-- outputs/                   # Generated files; ignored by Git
+|   |-- tables/
+|   `-- models/
+|-- tableau/
+|   `-- Crime Analysis.twb
+|-- docs/
+|   |-- data-dictionary.md
+|   |-- certificate.pdf
+|   `-- images/cybercrime-dashboard.png
+`-- tests/test_analysis.py
+```
+
+`src/cybercrime_analysis/analysis.py` holds shared schema and calculation contracts. `tests/` contains regression checks; `notebooks/` contains the analysis entry points. `docs/certificate.pdf` is supporting internship context, not evidence of model accuracy or a software test result.

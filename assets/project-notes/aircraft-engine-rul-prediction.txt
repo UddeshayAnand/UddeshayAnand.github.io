@@ -1,0 +1,104 @@
+# Aircraft Engine Remaining Useful Life Prediction
+
+Estimate the remaining operating cycles of simulated turbofan engines from NASA C-MAPSS FD001 sensor histories. This repository contains a Python experiment and batch inference CLI, alongside an earlier exploratory notebook and presentation.
+
+The experiment compares six fixed candidates using engine-separated validation. Its purpose is to make the data handling, model selection, and evaluation inspectable. It does not implement a deployed maintenance system.
+
+## Data and evaluation
+
+FD001 contains one operating condition and one degradation mode. Each row records an engine ID, cycle, three operating settings, and 21 sensor measurements. RUL is measured in **cycles**.
+
+| Partition | Engines | Rows | Target |
+|---|---:|---:|---|
+| Training | 100 | 20,631 | Final cycle minus current cycle |
+| Test | 100 | 13,096 | Supplied RUL at each engine's last observed cycle |
+
+The source and local file checksums are documented in [data/README.md](data/README.md). The supplied files are included, so training requires no separate download.
+
+Five `GroupKFold` splits hold out entire engines. Each held-out engine contributes one observation sampled after the first 20% of its history, excluding its final failure row. The seed controls this sampling and stochastic estimators. Ridge scaling is fitted inside each fold. The feature set follows the original notebook: two operating settings and 14 sensors; engine ID and cycle are excluded.
+
+Candidates compare a training-mean baseline, Ridge, random forests with raw and capped targets, and histogram gradient boosting with instantaneous inputs or additional 15-cycle rolling means. Rolling means use only current and earlier readings within each engine. Capped candidates train on `min(RUL, 125)`; evaluation always uses uncapped truth. Boosting's internal row-based early stopping is disabled. Predictions are clipped at zero.
+
+The minimum mean validation RMSE selects the model before official test data or labels are loaded. All candidates are then refitted on all training engines and evaluated on official endpoints. Validation and test use different censoring distributions, so their scores are not interchangeable estimates.
+
+## Recorded results
+
+| Model | Validation RMSE, mean ± SD | Test RMSE | Test MAE | Test R² |
+|---|---:|---:|---:|---:|
+| Random forest, cap 125 — selected | 27.93 ± 3.11 | 18.40 | 13.36 | 0.804 |
+| Histogram gradient boosting, cap 125 | 28.08 ± 3.09 | 18.06 | 12.95 | 0.811 |
+| Histogram gradient boosting, rolling means, cap 125 | 28.92 ± 2.25 | 19.65 | 14.33 | 0.777 |
+| Random forest, raw targets | 34.30 ± 3.46 | 31.76 | 23.57 | 0.416 |
+| Ridge, raw targets | 35.89 ± 1.35 | 31.99 | 25.47 | 0.408 |
+| Training mean | 55.08 ± 4.16 | 52.62 | 40.88 | -0.604 |
+
+The validation-selected model is `forest_cap125`. Its asymmetric test score is **991.42**, summed across 100 endpoints.
+
+This fresh run replaces the supplied reports, whose original run manifest was missing. It selects a different model from those reports; results here describe the verified pinned environment. Running the original source and the refactored source in this same environment reproduced all three result CSVs using relative and absolute tolerances of 1e-12. The supplied reports had no manifest, so their discrepancy cannot be attributed to a specific environment change.
+
+![Model comparison](reports/figures/model_comparison.png)
+
+The random-forest cap comparison changes only the training target. Rolling means did not improve the instantaneous-input boosting candidate in this run. These observations concern the fixed candidates and seed, rather than statistical superiority across experiments.
+
+![Prediction diagnostics](reports/figures/prediction_diagnostics.png)
+
+Positive errors overestimate remaining life. The asymmetric score sums `exp(-error / 13) - 1` for negative errors and `exp(error / 10) - 1` otherwise. It penalizes overestimation more strongly. The plot shows substantial errors for some short lifetimes and underestimation at lifetimes above the training cap.
+
+[reports/run.json](reports/run.json) records the fresh run's timestamp, seed, versions, candidate settings, feature names, fold membership, evaluation rows, and SHA-256 hashes of data, source, and reports. It describes this run only; provenance for the previously supplied reports was unavailable. Small numerical differences across platforms or dependency versions are possible.
+
+## Run locally
+
+Use **Python 3.12** from the repository root. The pinned setup includes runtime, test, and package build dependencies and has been verified on Windows. Linux CI is configured but has not been verified remotely.
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-lock.txt
+python -m pip install --no-deps --no-build-isolation -e .
+python -m pip check
+python -m pytest -q
+aircraft-rul train
+aircraft-rul predict --input data/raw/test_FD001.txt
+```
+
+On macOS/Linux, activate with `source .venv/bin/activate`; the remaining commands are the same. Broader dependency ranges are declared in `pyproject.toml`; the pinned file is the tested setup. No environment variables or credentials are required.
+
+Training writes reports to `reports/rerun/` and a model to `artifacts/model.joblib`. Prediction writes `artifacts/predictions.csv`, with `engine_id` and `predicted_rul` columns. It does not read RUL labels. Pass `--output` or `--artifact` to use different paths. Existing files at those paths are overwritten.
+
+Input histories must have 26 numeric columns, positive integer IDs and cycles, and contiguous cycles beginning at 1 for each engine. Input order may vary; the reader sorts it. Inference predicts once per engine at its last observed cycle. Training validation requires at least ten engines, at least two cycles per engine, and at least two held-out engines per fold. The four reported metrics require at least two observations.
+
+Only load model artifacts you trained or trust: joblib deserialization can execute code. Retrain artifacts when changing the Python or scikit-learn environment.
+
+To replace the recorded reports explicitly:
+
+```bash
+aircraft-rul train --data-dir data/raw --output reports --seed 42
+```
+
+## Code and tests
+
+| Location | Responsibility |
+|---|---|
+| `src/aircraft_rul/data.py` | Input contracts, targets, causal features, endpoint selection |
+| `src/aircraft_rul/experiment.py` | Candidate settings, grouped validation, refitting, reporting |
+| `src/aircraft_rul/metrics.py` | RMSE, MAE, R², asymmetric score; explicit numerical errors |
+| `src/aircraft_rul/cli.py` | Training and prediction commands, artifact checks, user errors |
+| `tests/` | Data contracts, actual fold fitting, target caps, selection independence, saved-model and CLI round trips |
+| `reports/` | Recorded metrics, predictions, fold scores, figures, and run manifest |
+| `docs/` | Historical notebook and presentation; [limitations](docs/README.md) |
+
+Tests use small synthetic trajectories for integration checks and inspect the supplied FD001 data contracts. They do not rerun the full benchmark on every invocation. A wheel can be built with:
+
+```bash
+python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
+```
+
+The wheel contains the application package; use the repository checkout for datasets and historical documents.
+
+## Limitations
+
+This is a simulated, single-subset benchmark. One seed and a fixed candidate set do not establish generalization to different operating conditions or real engines. Training uses all cycles, while evaluation uses one endpoint per engine. The cap constrains estimates of long lifetimes, and the model provides no uncertainty intervals.
+
+The historical notebook uses a different methodology and older APIs; its saved results should not be mixed with the package's results. See [docs/README.md](docs/README.md).
+
+Priorities for further work are multi-seed validation, evaluation on FD002–FD004, and calibrated prediction intervals. A code license has not yet been selected; dataset attribution and reuse notes are separate in [data/README.md](data/README.md).

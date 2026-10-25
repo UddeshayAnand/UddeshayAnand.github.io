@@ -1,0 +1,118 @@
+# Image retrieval and clustering
+
+A Streamlit application for exploring a Tiny ImageNet image index and retrieving visually similar images. It uses pretrained ResNet50 features, PCA, and K-Means. The supplied index contains 100,000 images represented by 256-dimensional vectors and assigned to 300 clusters.
+
+The project separates offline index construction from interactive queries. It is an experiment in cluster-restricted retrieval: searching one cluster reduces the candidate set, but may miss closer images assigned to other clusters. Retrieval accuracy and latency have not been benchmarked.
+
+## Approach
+
+1. Decode the query as RGB, resize the short edge to 256 pixels, center-crop to 224×224, and normalize with ImageNet statistics.
+2. Extract 2048 features with ResNet50 ImageNet V1 weights, with the classifier removed.
+3. Transform the query with the saved 256-component PCA model.
+4. Predict its K-Means cluster and rank the images in that cluster by Euclidean distance.
+5. Display up to five matches. Cluster Analysis shows cached 2D or 3D PCA projections of the saved embeddings.
+
+The **relative score** is `1 - distance / maximum_distance_in_cluster`. If all distances are zero, every score is 1. It is not a probability, a measured accuracy, or a score comparable across queries. The nearest match only receives 1 when its distance is zero. Images already in the index may retrieve themselves.
+
+## Setup
+
+Python **3.12** is the verified interpreter version. From this project directory, create a virtual environment and install the runtime dependencies:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+On macOS/Linux, activate with `source .venv/bin/activate`. Other operating systems and GPU configurations have not been validated during this maintenance pass. Direct dependency versions are pinned; this is not a full transitive lockfile. The scikit-learn version matters because the bundled model pickles were saved with **1.6.1**. Mismatched estimator versions are rejected with a setup error.
+
+The five saved index files are included in `data/`. They are executable pickle artifacts where applicable: load only trusted copies. Run the artifact-only check before downloading images or weights:
+
+```powershell
+python -m src.verify_inference --artifacts-only
+```
+
+### Image corpus
+
+The original image corpus is **not included**. Download and extract [Tiny ImageNet](https://cs231n.stanford.edu/tiny-imagenet-200.zip), then place its training directory here:
+
+```text
+data/
+  tiny-imagenet-200/
+    train/
+      n01443537/
+        images/
+          n01443537_0.JPEG
+          ...
+```
+
+`data/train/<class>/images/` is also supported when `data/tiny-imagenet-200/` is absent. The filename mapping is relative to the directory containing `train/`. See [data/README.md](data/README.md) for the artifact contract and custom paths.
+
+No API keys or environment variables are required. The first search downloads ResNet50 V1 weights through Torch unless they are already cached. CPU retrieval and cluster views were smoke-tested against the downloaded corpus; GPU execution and a full notebook rebuild were not run. This is not a retrieval-accuracy evaluation.
+
+## Run
+
+```powershell
+python -m streamlit run app/main.py
+```
+
+Open the local URL printed by Streamlit. Search reports missing corpus images before inference. **Cluster Analysis can run without the corpus or ResNet weights.** Use **Reload engine** after installing images or replacing artifacts. Both projections are cached in memory after their first calculation; the app calculates only the selected projection.
+
+For a corpus-backed smoke check:
+
+```powershell
+python -m src.verify_inference
+# Or supply a query:
+python -m src.verify_inference --query assets/images_s1.jpg
+```
+
+The default query is the first indexed image. The check verifies sorted results, readable result images, and projection shapes; it does not measure semantic retrieval quality. Failures return a nonzero exit status.
+
+## Tests
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+The suite uses the standard-library test runner, small fitted PCA/K-Means fixtures, temporary images, and Streamlit's AppTest. It covers ranking, cluster restriction, relative-score edge cases, artifact validation, preprocessing consistency, explicit failures, and app error/navigation behavior. It does not download datasets or weights. Synthetic features are confined to tests.
+
+See [docs/verification.md](docs/verification.md) for executed checks and remaining verification limits.
+
+## Repository layout
+
+```text
+app/                    Streamlit views, sidebar helpers, CSS
+src/inference.py        Artifact loading, validation, feature extraction, ranking, projections
+src/utils.py            Image decoding and shared query/build preprocessing
+src/verify_inference.py Artifact-only validation and corpus-backed smoke check
+src/extract_images.py   Optional STL-10 export for the separate historical experiment
+tests/                  Offline unit and Streamlit app tests
+data/                   Saved index and model artifacts; corpus installed separately
+notebooks/              Canonical index build and two alternative historical experiments
+assets/                 Sample queries and historical screenshots
+requirements.txt        Pinned runtime dependencies
+requirements-dev.txt    Additional notebook dependencies
+```
+
+## Rebuilding the index
+
+Install `requirements-dev.txt` and open `notebooks/retrieval.ipynb` in a Jupyter-compatible notebook editor. It shares the app's preprocessing and inference implementation. It requires the full image corpus and may require substantial memory and compute. Export cells overwrite the five files in `data/`; preserve them separately if needed. The revised notebook has not been rerun end to end.
+
+The other notebooks explore different datasets or feature configurations and export to separate `experimental_outputs/` directories. Their outputs cannot replace the app artifacts. Details are in [notebooks/README.md](notebooks/README.md).
+
+## Historical example
+
+![Historical retrieval example showing ranked cat images](assets/screenshots/search_results_2.png)
+
+This screenshot predates the maintenance changes. Its UI calls the relative score “Confidence”; the current UI uses “Relative score.” It is a qualitative example, not evidence of current-run accuracy. [Asset notes](assets/README.md) describe the retained samples and unresolved attribution.
+
+## Limitations
+
+- The supplied artifacts match the documented dimensions, but their exact original training environment and image-to-embedding provenance have not been independently reconstructed.
+- Search is limited to one predicted cluster. There is no measured recall comparison with global nearest-neighbor search.
+- PCA plots lose information; visual separation does not establish semantic classes or retrieval quality.
+- The index, projections, and figures are held in memory. No scale or performance guarantees have been measured.
+- Sample image sources and reuse terms still need confirmation. AVIF queries are not supported by the uploader.
+- No project license has been selected; do not assume an open-source license or that third-party images are covered by one.
+
+Next priorities are asset attribution/license decisions, a measured retrieval evaluation against a global-search baseline, and a recorded full index rebuild.

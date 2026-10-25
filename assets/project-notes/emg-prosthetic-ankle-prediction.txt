@@ -1,0 +1,138 @@
+# EMG-Based Prosthetic Ankle Prediction
+
+Offline experiments predicting the next flex-sensor reading from two EMG inputs
+and the current flex reading. The supplied recordings come from a prosthetic
+ankle project; this repository evaluates sensor regression, without controlling
+hardware. Predictions and errors are **uncalibrated sensor counts**, not degrees.
+
+![Chronological holdout errors](results/chronological-mae.png)
+
+## Run locally
+
+Use Python 3.11 or 3.12. The saved results were generated with Python 3.12.5 and
+the direct dependency versions in `requirements.txt`. Run from this folder:
+
+```bash
+python -m venv .venv
+# Windows PowerShell:
+.venv\Scripts\Activate.ps1
+# macOS/Linux: source .venv/bin/activate
+
+python -m pip install -e .
+python -m unittest discover -s tests -v
+emg-ankle --output results/local
+```
+
+The evaluation uses the supplied CSVs and needs no sensors, GPU, credentials,
+downloaded data, or pickle loading. It writes `metrics.csv`, eight prediction
+tables, `audit.json`, `environment.json`, and a comparison chart. The audit checks
+input hashes, next-row target pairing, and historical linear predictions before
+creating output files. Hashes identify this checkout's baseline, not the original
+acquisition provenance.
+
+Without `--output`, results are written into `results/`, replacing the generated
+metrics, chart, environment metadata, and eight prediction tables there. The four
+`prediction_results_*.csv` historical exports are retained. Use `results/local`
+to preserve the supplied results. Relative output paths are resolved against
+`--root`, which defaults to the working directory. From another directory:
+
+```bash
+emg-ankle --root /path/to/emg-prosthetic-ankle-prediction --output results/local
+```
+
+`python -m emg_ankle.cli` accepts the same arguments. The editable install expects
+the repository's data to remain available; recordings are not bundled in a wheel.
+
+To use the maintained walkthrough:
+
+```bash
+python -m pip install -e ".[notebooks]"
+jupyter lab notebooks/evaluate.ipynb
+```
+
+## Method
+
+Four recordings contain 25,111 observations. Dropping the final observation of
+each yields 25,107 pairs: inputs are `emg1`, `emg2`, `angle_i`; the target
+`angle_f` is the following row's `angle_i`. The supplied processed CSVs match
+this operation exactly. See the [data dictionary](data/README.md).
+
+Each recording is evaluated with persistence (predict the current flex reading),
+angle-only linear regression, EMG-only linear regression, full linear regression,
+and a 100-tree random forest. Models are trained separately for each recording
+and split, producing 40 evaluations:
+
+- A seed-42 random 80/20 split reproduces the historical linear experiment.
+  Adjacent pairs can share raw samples across this split, so it is not evidence
+  of future-session generalization.
+- A chronological split trains on the earlier portion and tests on the final
+  20%, excluding one boundary pair so no raw observation appears on both sides.
+
+## Results
+
+Chronological holdout MAE in sensor counts; lower is better:
+
+| Recording | Persistence | Angle only | EMG + angle, linear | EMG + angle, forest |
+|---|---:|---:|---:|---:|
+| Sitting fast | 5.096 | 5.124 | 5.139 | 6.487 |
+| Sitting slow | 4.633 | 4.781 | 4.848 | 5.076 |
+| Standing fast | 8.826 | 8.824 | 8.701 | 7.935 |
+| Standing slow | 2.895 | 2.908 | 2.901 | 3.449 |
+
+Both full-feature models beat persistence on one of four recordings. On standing
+fast, the linear model reduces MAE by about 1.4% and the forest by 10.1%.
+Persistence has lower MAE on the other three. The standing-fast random-split
+linear R² is approximately 0.980294; this is a regression score, not 98% accuracy.
+See [all metrics](results/metrics.csv) and the
+[walkthrough](notebooks/evaluate.ipynb).
+
+Current flex position is a strong baseline for this immediate next-row task.
+These results do not establish an EMG benefit for other prediction horizons,
+independent sessions, or participants. No clinical effect or statistical
+significance is inferred from four within-recording holdouts.
+
+## Code and supporting material
+
+```text
+src/emg_ankle/data.py       CSV validation and next-row pairing
+src/emg_ankle/evaluate.py   Input checks, splits, models, metrics, and plotting
+src/emg_ankle/cli.py        Command-line entry point
+tests/                    Data integrity, numerical reproduction, and CLI tests
+data/raw/                 Four supplied recordings
+data/processed/           Supplied target-pairing fixtures
+results/                  Saved metrics, predictions, and comparison chart
+notebooks/                Maintained walkthrough and historical experiments
+firmware/                 Attributed single-channel Arduino filter example
+docs/                     Historical report, certificate, manifest, and caveats
+assets/                   Supplied waveform image
+```
+
+Tests cover invalid sensor values, target alignment, temporal separation,
+historical linear reproduction, input hashes, CLI errors, and output generation
+on small synthetic fixtures. CI is configured to run the tests and the complete
+evaluation on Python 3.12; configuration alone does not establish a successful
+hosted run. No lint or static type-check configuration is currently provided.
+
+## Limitations and historical context
+
+Standing-fast `emg2` is zero in 8,431 of 10,327 rows and is not constant. The
+recordings lack timestamps, calibrated angle units, and documented independent
+session or participant identifiers. The Arduino sketch reads one channel and
+does not reproduce the full three-input acquisition setup.
+
+The [historical report](docs/report.pdf) describes Raspberry Pi integration and
+mechanical design beyond the maintained offline code. Its percentage-accuracy
+and hardware claims are not current validation results. See
+[technical limitations](docs/limitations.md),
+[historical notebook notes](notebooks/README.md), and
+[model provenance](models/README.md).
+
+The [training certificate](docs/certificate.pdf) and report are supplied personal
+documents. The waveform below is a supplied illustration: its generating code,
+axis units, and relationship to these CSVs are not established.
+
+![Supplied waveform illustration; axis units and provenance are undocumented](assets/emg-waveform.png)
+
+Useful next work is to establish acquisition metadata and calibration, collect
+independent timestamped sessions, and compare longer prediction horizons against
+persistence. Hardware testing requires its own validated control implementation.

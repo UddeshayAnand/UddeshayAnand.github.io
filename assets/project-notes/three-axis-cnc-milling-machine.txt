@@ -1,0 +1,81 @@
+# Three-Axis CNC Milling Machine
+
+Documentation and analytical examples for an educational three-axis MDF CNC machine. The supplied certificate records Uddeshay Anand's team participation at CCET in a project funded by DST, Chandigarh.
+
+The owner's account describes SolidWorks assembly design, MDF fabrication with dowel nuts and bolts, steel guides and linear bearings, NEMA 23 motors and Mach3 control, at approximately INR 48,000. The repository preserves that account alongside the supplied evidence. The Python toolkit and OpenSCAD model are later analytical and conceptual reconstructions, not recovered machine-control software or original CAD.
+
+![Tool-center trajectory](results/toolpath.svg)
+
+## Evidence and attribution
+
+| Item | Status |
+| --- | --- |
+| Team membership; design, development and fabrication at CCET; DST sponsorship | Recorded in the [certificate](docs/certificate.pdf) |
+| SolidWorks, MDF, dowel fasteners, NEMA 23, Mach3, approximately INR 48,000, functional demonstration | Project owner's account; not independently verified here |
+| Assembly and component drawings | [Supplied 23-page PDF](docs/assembly-drawings.pdf); includes multiple drawing credits |
+| Workshop images | [View 1](docs/workshop-view-1.png), [view 2](docs/workshop-view-2.png); origin and relationship to the original machine unconfirmed |
+| Python calculations, trajectory and OpenSCAD model | Newly implemented portfolio reconstruction |
+| Positioning accuracy, repeatability, cutting capability | No measurement data supplied |
+
+## What is included
+
+```text
+cad/                    Editable conceptual OpenSCAD assembly
+config/                 Explicit demonstration parameters
+docs/                   Technical report, component inventory and supplied evidence
+results/                Reproducible JSON, CSV and SVG outputs
+scripts/                Reproduction and asset-integrity checks
+src/cnc_portfolio/      Dependency-free engineering calculations
+tests/                  Numerical and invalid-input checks
+.github/workflows/      Automated tests and artifact reproduction checks
+```
+
+## Run locally
+
+Requires **Python 3.10 or newer**. There are no third-party Python dependencies or installation steps. From the repository root:
+
+```console
+python -m unittest discover -s tests -v
+python scripts/reproduce.py
+python scripts/reproduce.py --check
+python scripts/verify_evidence.py
+```
+
+`reproduce.py` reads [config/demo.json](config/demo.json) and writes three files in `results/`. All inputs are demonstration assumptions. To use another scenario, copy that JSON file, edit its values, and pass `--config YOUR_CONFIG.json --output-dir YOUR_OUTPUT_DIRECTORY`. Default paths are resolved relative to the script's project directory; explicit relative paths use the current working directory. The output directory's three generated files will be overwritten.
+
+`--check` compares the three expected outputs without writing them, including detecting missing files. It accepts LF/CRLF differences and ignores unrelated files. The asset check compares the supplied PDFs and images with [recorded hashes](docs/evidence-manifest.json); matching hashes do not establish authenticity or provenance.
+
+To inspect the assembly, open `cad/conceptual_assembly.scad` in OpenSCAD. Its assumed dimensions and editing limits are documented in the [technical report](docs/report.md#conceptual-cad). OpenSCAD is optional for the Python workflow. The model is not a fabrication drawing.
+
+## Methodology
+
+The software computes commanded steps per millimetre from full motor steps per revolution, microstep subdivision and screw **lead** in mm/revolution. It also computes ideal axial force, simply supported round-rail deflection, 3D path length and ideal constant-speed traversal time. A closed rectangular tool-center path is exported as CSV and SVG. Equations, units and model constraints are in the [technical report](docs/report.md#equations-and-units).
+
+All inputs in the demonstration configuration are **assumptions**, not recovered Mach3 settings. NEMA frame size does not specify torque, step angle, current or screw lead. The model excludes backlash, lost steps, acceleration, spindle cutting loads, controller pulse limits and joint compliance.
+
+## Reproduced computational results
+
+With assumed 200 steps/revolution, 8 microsteps and 8 mm/revolution lead, the example yields **200 commanded steps/mm**, a **0.005 mm nominal command increment**, and **2,000 pulses/s at 600 mm/min**. These are command-resolution calculations, not physical accuracy measurements.
+
+The 80 × 50 mm rectangle has a **260 mm path length** and an ideal traversal time of **26 seconds at 600 mm/min**, excluding acceleration and other machine overhead. This is a mathematical demonstration, not a recorded machining experiment.
+
+## Mechanical and control architecture
+
+```mermaid
+flowchart LR
+    A[Part design in SolidWorks: owner account] --> B[CAM and toolpath preparation: original workflow unknown]
+    B --> C[Mach3: owner-reported control]
+    C --> D[Motion interface: model unknown]
+    D --> E[Stepper drivers: models unknown]
+    E --> F[X / Y / Z NEMA 23 motors: owner account]
+    F --> G[Screw-driven axes and linear guides]
+    G --> H[MDF frame and moving tool/workpiece]
+```
+
+## Tests and limitations
+
+The unittest suite covers numerical reference values and scaling, malformed inputs, configuration validation, custom scenarios, CLI failures, deterministic outputs and asset-integrity failures. GitHub Actions is configured for Python 3.10, 3.12 and 3.13. These checks exercise the software; they do not validate physical machining performance.
+
+Original SolidWorks files, Mach3 settings, electrical schematics, exact component specifications and physical measurements are unavailable. The [component inventory](docs/bill-of-materials.csv) is not a procurement BOM and does not substantiate the reported total cost. Motor-frame information differs between the owner's account and a supplied drawing. Useful next steps are to reconcile those records and collect documented calibration, backlash and repeatability measurements.
+
+No repository license has been selected. Rights to supplied drawings, images and the certificate must be considered separately from the Python code.
